@@ -55,6 +55,12 @@ DEFAULT_STATE = {
             "from_card_id": "card_init_1",
             "to_card_id": "card_init_02",
             "color": "red"
+        },
+        {
+            "id": "string_2",
+            "from_card_id": "card_init_1",
+            "to_card_id": "card_init_03",
+            "color": "blue"
         }
     ]
 }
