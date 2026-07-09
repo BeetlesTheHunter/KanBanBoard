@@ -20,8 +20,8 @@ DEFAULT_STATE = {
     "cards": [
         {
             "id": "card_init_1",
-            "title": "Access & Networking",
-            "content": "Configure the reverse proxy and Tailscale routing so the mates can access this board remotely.",
+            "title": "Welcome Team!",
+            "content": "Quick shared whiteboard. Drag notes",
             "created_by": "System",
             "last_edited_by": "System",
             "x": 150,
@@ -29,13 +29,23 @@ DEFAULT_STATE = {
             "stamps": []
         },
         {
-            "id": "card_init_2",
-            "title": "Career Prep",
-            "content": "Draft Gakuchika achievements for the upcoming game programmer role applications.",
+           "id": "card_init_02",
+            "title": "Try It Out",
+            "content": "Grab this card and drag it around to see the string stretch!",
             "created_by": "System",
             "last_edited_by": "System",
-            "x": 450,
-            "y": 210,
+            "x": 400,
+            "y": 150,
+            "stamps": []
+        },
+        {
+            "id": "card_init_03",
+            "title": "Current Limits",
+            "content": "Notice: Custom connection strings cannot be manually added yet.",
+            "created_by": "System",
+            "last_edited_by": "System",
+            "x": 100,
+            "y": 400,
             "stamps": []
         }
     ],
@@ -43,8 +53,14 @@ DEFAULT_STATE = {
         {
             "id": "string_start",
             "from_card_id": "card_init_1",
-            "to_card_id": "card_init_2",
+            "to_card_id": "card_init_02",
             "color": "red"
+        },
+        {
+            "id": "string_2",
+            "from_card_id": "card_init_1",
+            "to_card_id": "card_init_03",
+            "color": "blue"
         }
     ]
 }
