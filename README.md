@@ -24,7 +24,7 @@ To maximize context retention and ensure absolute simplicity, the entire applica
 
 **1. Clone the repository:**
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/BeetlesTheHunter/KanBanBoard
 ```
 
 **2. Create and activate a Virtual Environment:**
