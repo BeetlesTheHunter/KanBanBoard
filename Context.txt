@@ -1,0 +1,138 @@
+DETECTIVE-BOARD COLLABORATIVE CANVAS SPECIFICATION SHEET
+Target Deployment: Strict Local Development (Python + Native Uvicorn Server)
+Development Paradigm: LLM-Assisted Copy-Paste Development (No Agentic System)
+
+======================================================================
+
+    PRIMARY ARCHITECTURE & TECH STACK SELECTION
+    ======================================================================
+    To maximize LLM context retention and eliminate frontend/backend build-step compilation errors, the stack is hard-constrained to:
+
+    Backend: Python 3.11+ using FastAPI (Uvicorn server).
+
+    Frontend: Single-page Vanilla JavaScript + HTML5 Canvas/SVG, using Tailwind CSS via CDN (No Node.js, No NPM, No Webpack/Vite).
+
+    State Store (Persistent): A single local "state.json" file generated and read directly inside the project root directory.
+
+    State Store (Volatile): Python in-memory dictionaries (RAM-only) for ephemeral session locks.
+
+    Concurrency Engine: A single-threaded background worker driven by a native Python asyncio.Queue to handle sequential file I/O operations without file locking collisions.
+
+======================================================================
+2. GLOBAL DATA SCHEMAS
+A. Persistent State Schema (state.json)
+
+This structure is maintained in backend memory and committed to disk sequentially via the background queue worker.
+
+{
+"cards": [
+{
+"id": "card_8f92a1b3",
+"title": "Fix Git Permissions",
+"content": "Need to stop Maverick from pushing to main",
+"created_by": "Alex",
+"last_edited_by": "Sam",
+"x": 450,
+"y": 210,
+"stamps": [
+{
+"type": "checkmark_png",
+"rel_x": 10,
+"rel_y": 110,
+"placed_by": "Alex"
+}
+]
+}
+],
+"connections": [
+{
+"id": "string_a9c8d7",
+"from_card_id": "card_8f92a1b3",
+"to_card_id": "card_b2e1f4a5",
+"color": "red"
+}
+]
+}
+B. Volatile Session Schema (RAM Only)
+
+Maintained strictly in active server memory. Automatically purges on container or system reboot to prevent deadlocks.
+
+active_locks = {
+"card_8f92a1b3": {
+"user": "Alex",
+"last_ping_at": "2026-07-09T09:05:00Z"
+}
+}
+======================================================================
+3. SUBSYSTEM IMPLEMENTATION REQUIREMENTS
+Subsystem A: The FIFO Concurrency Queue
+
+    All client write actions (card moves, content edits, stamps, connection updates) must hit a single POST endpoint that extracts the payload and drops it into app.task_queue.
+
+    The endpoint must immediately return 202 Accepted {"status": "queued"} to the browser to ensure an instant, low-latency UI feel.
+
+    A background task (asyncio.create_task) must run a continuous while True: loop, popping actions off the queue one by one, executing the modification to the main data state, and saving to state.json in the root folder.
+
+Subsystem B: Pass-Through Authentication
+
+    No database registration or password storage.
+
+    First-time site access triggers a simple overlay prompt. The verified username string is saved to browser localStorage.setItem('username').
+
+    Every API payload submitted by the client must inject the "user" string from localStorage.
+
+    Backend Guardrail: If the backend queue processor encounters a null, empty, or whitespace user string, it must sanitize and normalize the value to "Anonymous".
+
+Subsystem C: Split-State Heartbeat Locking
+
+    Clicking into a card text box or beginning a card drag triggers an immediate {"action": "lock"} payload to the backend queue.
+
+    While a card is actively selected, the frontend must execute a background setInterval loop that sends a tiny heartbeat ping payload to the server every 5 seconds.
+
+    The server updates the volatile active_locks dictionary with the user name and current ISO timestamp.
+
+    A background task scans active_locks every 5 seconds. If (current_time - last_ping_at) > 10 seconds, the lock is broken automatically, allowing other clients to interact with the card (preventing deadlocks due to user crashes or closed browser tabs).
+
+Subsystem D: Infinite Free-Form Canvas Layout
+
+    Dimensions: Card elements are static dimensions enforced via Tailwind CSS (w-40 h-40 / 160px by 160px). Stamps are capped at 32px by 32px using CSS boundaries.
+
+    Layer Z-Index Hierarchy:
+
+        z-0: Background Board Canvas Wall
+
+        z-10: Transparent Full-Screen SVG Overlay Layer (Target for drawing connection lines)
+
+        z-20: Interactive Sticky Note  containers (Using position: absolute)
+
+    Stamps: Rendered as child elements inside the parent card  using absolute positions (rel_x, rel_y) relative to the card's top-left (0,0) origin.
+
+    Detective Strings: Drawn as SVG  or  attributes. The endpoints are calculated from the absolute centers of the two connected cards:
+    Center X = x + 80
+    Center Y = y + 80
+    While a card is dragged, the frontend must dynamically redraw its attached SVG line attributes in real-time.
+
+======================================================================
+4. LOCAL EXECUTION & TESTING DIRECTIVES
+
+    Environment Setup:
+    Ensure Python 3.11+ is installed. Install core dependencies via terminal:
+    pip install fastapi uvicorn
+
+    Launching Development Server:
+    Run the backend with hot-reloading active from your project root:
+    uvicorn main:app --reload --port 8000
+
+    Multi-User Local Simulation:
+    Open http://127.0.0.1:8000 in your primary browser. Open a secondary window in Incognito/Private mode. This isolates browser localStorage profiles, allowing you to simulate and test real-time board interaction between two distinct users simultaneously on a single screen.
+
+======================================================================
+LLM CODE GENERATION DIRECTIVES
+
+    No Code Splitting: Keep backend code consolidated within main.py where reasonable to prevent context loss across multiple files.
+
+    CDN Only: Do not use internal asset loaders. Pull Tailwind CSS and icons from public CDN links.
+
+    Idempotence: Write backend mutation functions so that out-of-order execution or duplicate processing handles missing card keys or missing connection targets gracefully without throwing fatal exceptions or breaking the queue loop.
+
+    Automatic File Initialization: On app startup, check if state.json exists. If it does not, automatically write an empty starter layout structure to prevent file-not-found read crashes.
