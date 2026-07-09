@@ -1,0 +1,10 @@
+# Environments
+venv/
+env/
+
+# Project State Data
+state.json
+
+# Python Cache
+__pycache__/
+*.pyc
