@@ -1,4 +1,4 @@
-# Detective-Board Collaborative Canvas 
+# KanBan Board
 
 A lightweight, real-time Kanban and brainstorming board built entirely in a single file. Designed with a strict local-development paradigm, this project eliminates complex build steps, node dependencies, and database setups in favor of raw Python and Vanilla JavaScript.
 
