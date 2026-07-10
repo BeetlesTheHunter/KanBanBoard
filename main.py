@@ -47,6 +47,22 @@ DEFAULT_STATE = {
             "x": 100,
             "y": 400,
             "stamps": []
+        },
+        {
+            "id": "tutorial_card_1",
+            "title":"Make Connections",
+            "x": 300,
+            "y": 600,
+            "content": "To draw a connection:\n1. Click the 🔗 (Link) button above.\n2. Click the 🔗 button on the Target Card.",
+            "last_edited_by": "System"
+        },
+        {
+            "id": "tutorial_card_2",
+            "title":"Target Card",
+            "x": 700,
+            "y": 600,
+            "content": "Try clicking my 🔗 button after clicking the one on the Welcome card to draw a red string between us!",
+            "last_edited_by": "System"
         }
     ],
     "connections": [
@@ -133,6 +149,32 @@ async def queue_processor():
                     })
                     card["last_edited_by"] = user
                     break
+        elif action == "add_connection":
+            if "connections" not in state:
+                state["connections"] = []
+                
+            from_id = payload.get("from_card_id")
+            to_id = payload.get("to_card_id")
+            
+            # Prevent drawing a line to itself
+            if from_id != to_id:
+                # Prevent duplicate connections between the same two cards
+                exists = any(
+                    (c.get("from_card_id") == from_id and c.get("to_card_id") == to_id) or 
+                    (c.get("from_card_id") == to_id and c.get("to_card_id") == from_id) 
+                    for c in state.get("connections", [])
+                )
+                
+                if not exists:
+                    import random
+                    conn_id = f"conn_{random.randint(10000, 99999)}"
+                    state["connections"].append({
+                        "id": conn_id,
+                        "from_card_id": from_id,
+                        "to_card_id": to_id,
+                        "color": "#ef4444" # Classic Detective Red
+                    })
+            
         elif action == "add_card":
             state["cards"].append({
                 "id": payload.get("card_id"),
@@ -274,6 +316,7 @@ async def serve_ui():
                 'investigate': '🔍'
             };
             let dragOffset = { x: 0, y: 0 };
+            let linkingFromId = null;
 
             async function queueAction(payload) {
                 payload.user = currentUser || "Anonymous";
@@ -332,14 +375,15 @@ async def serve_ui():
                         cardEl.className = 'card bg-yellow-100 shadow-lg border border-yellow-300 p-3 rounded shadow-[4px_4px_10px_rgba(0,0,0,0.3)] flex flex-col cursor-move';
                         
                         cardEl.innerHTML = `
-                            <div class="flex justify-between items-start mb-1">
+                            <div class="flex justify-between items-start mb-1 z-30 relative">
                                 <input type="text" class="card-title font-bold text-sm bg-transparent border-none outline-none cursor-text w-full" placeholder="Title">
-                                <div class="flex gap-2">
+                                <div class="flex gap-2 bg-white/80 rounded px-1">
+                                    <button class="link-btn text-slate-400 hover:text-blue-500 text-xs font-bold cursor-pointer transition-colors" title="Connect">🔗</button>
                                     <button class="stamp-btn text-slate-400 hover:text-green-500 text-xs font-bold cursor-pointer transition-colors" title="Add Stamp">⨁</button>
                                     <button class="delete-btn text-red-400 hover:text-red-600 text-xs font-bold cursor-pointer transition-colors">✕</button>
                                 </div>
                             </div>
-                            <textarea class="card-content text-xs cursor-text" placeholder="Write here..."></textarea>
+                            <textarea class="card-content text-xs cursor-text relative z-30" placeholder="Write here..."></textarea>
                             <div class="text-[9px] text-slate-400 mt-auto text-right lock-status relative z-30"></div>
                             <div class="stamps-container absolute inset-0 pointer-events-none z-20 overflow-hidden rounded"></div>
                         `;
@@ -376,6 +420,40 @@ async def serve_ui():
                                 });
                             }
                         });
+
+                        // Link Button Event Listener (Two-Click Targeting)
+                        const linkBtn = cardEl.querySelector('.link-btn');
+                        
+                        // Visual feedback if this card is currently the source of a link
+                        if (linkingFromId === card.id) {
+                            linkBtn.classList.add('text-blue-600', 'scale-125');
+                        }
+
+                        linkBtn.addEventListener('mousedown', (e) => {
+                            e.stopPropagation(); // Prevent drag logic
+                            
+                            if (linkingFromId === null) {
+                                // Click 1: Activate Targeting Mode
+                                linkingFromId = card.id;
+                                document.body.style.cursor = 'crosshair';
+                                renderBoard(); // Re-render to show the active button state
+                            } else if (linkingFromId !== card.id) {
+                                // Click 2: Complete the link on a different card
+                                queueAction({
+                                    action: "add_connection",
+                                    from_card_id: linkingFromId,
+                                    to_card_id: card.id
+                                });
+                                // Reset state
+                                linkingFromId = null;
+                                document.body.style.cursor = 'default';
+                            } else {
+                                // Clicked the same card twice: Cancel targeting
+                                linkingFromId = null;
+                                document.body.style.cursor = 'default';
+                                renderBoard();
+                            }
+                        });
                         
                         canvas.appendChild(cardEl);
                         
@@ -393,6 +471,15 @@ async def serve_ui():
                             
                             document.addEventListener('mousemove', onMouseMove);
                             document.addEventListener('mouseup', onMouseUp);
+
+                            document.getElementById('board').addEventListener('mousedown', (e) => {
+                            // If you click directly on the board background while linking
+                            if (e.target.id === 'board' && linkingFromId !== null) {
+                                linkingFromId = null;
+                                document.body.style.cursor = 'default';
+                                renderBoard(); // Clear button visual states
+                            }
+                            });
                         });
 
                         const onMouseMove = (e) => {
