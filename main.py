@@ -133,6 +133,36 @@ async def queue_processor():
                     })
                     card["last_edited_by"] = user
                     break
+                    
+        elif action == "add_connection":
+            from_id = payload.get("from_card_id")
+            to_id = payload.get("to_card_id")
+            conn_id = payload.get("conn_id")
+            
+            # Prevent drawing a line to itself
+            if from_id and to_id and from_id != to_id:
+                # Prevent duplicate connections between the same two cards
+                exists = any(
+                    (c.get("from_card_id") == from_id and c.get("to_card_id") == to_id) or 
+                    (c.get("from_card_id") == to_id and c.get("to_card_id") == from_id) 
+                    for c in state.get("connections", [])
+                )
+                
+                if not exists:
+                    state["connections"].append({
+                        "id": conn_id,
+                        "from_card_id": from_id,
+                        "to_card_id": to_id,
+                        "color": "red"
+                    })
+
+        elif action == "delete_connection":
+            target_conn_id = payload.get("conn_id")
+            state["connections"] = [
+                conn for conn in state.get("connections", [])
+                if conn.get("id") != target_conn_id
+            ]
+
         elif action == "add_card":
             state["cards"].append({
                 "id": payload.get("card_id"),
@@ -220,10 +250,11 @@ async def serve_ui():
             .card { width: 160px; height: 160px; position: absolute; z-index: 20; } /* Tailwind w-40 h-40 enforced via static dimensions[cite: 1] */
             .card textarea { resize: none; border: none; outline: none; background: transparent; width: 100%; height: 60px;}
             svg#connections { z-index: 10; pointer-events: none; } /* Layer Z-Index Hierarchy[cite: 1] */
+            svg#connections g { pointer-events: auto; } /* Allows clicking on connection hitboxes */
             #board-bg { z-index: 0; } /* Layer Z-Index Hierarchy[cite: 1] */
         </style>
     </head>
-    <body class="w-screen h-screen relative cursor-crosshair text-slate-800 font-sans" id="board-bg">
+    <body class="w-screen h-screen relative text-slate-800 font-sans" id="board-bg">
         
         <!-- Pass-Through Authentication Overlay[cite: 1] -->
         <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 hidden">
@@ -263,6 +294,7 @@ async def serve_ui():
             let boardState = { cards: [], connections: [] };
             let activeLocks = {};
             let localLockId = null; 
+            let linkingFromId = null; // Tracks the card initiating a connection target
             let heartbeatInterval = null;
             const canvas = document.getElementById('canvas');
             const svgLayer = document.getElementById('connections');
@@ -331,12 +363,26 @@ async def serve_ui():
                         cardEl.id = card.id;
                         cardEl.className = 'card bg-yellow-100 shadow-lg border border-yellow-300 p-3 rounded shadow-[4px_4px_10px_rgba(0,0,0,0.3)] flex flex-col cursor-move';
                         
+                        const stampButtonsHTML = Object.entries(STAMP_LIBRARY).map(([key, emoji]) => 
+                            `<button class="choose-stamp-btn text-sm hover:scale-125 transition-transform cursor-pointer" data-type="${key}">${emoji}</button>`
+                        ).join('');
+
                         cardEl.innerHTML = `
-                            <div class="flex justify-between items-start mb-1">
-                                <input type="text" class="card-title font-bold text-sm bg-transparent border-none outline-none cursor-text w-full" placeholder="Title">
-                                <div class="flex gap-2">
-                                    <button class="stamp-btn text-slate-400 hover:text-green-500 text-xs font-bold cursor-pointer transition-colors" title="Add Stamp">⨁</button>
-                                    <button class="delete-btn text-red-400 hover:text-red-600 text-xs font-bold cursor-pointer transition-colors">✕</button>
+                            <div class="card-header-container w-full z-30 relative min-h-[24px]">
+                                <!-- Normal State -->
+                                <div class="header-normal flex justify-between items-start w-full mb-1">
+                                    <input type="text" class="card-title font-bold text-sm bg-transparent border-none outline-none cursor-text w-full" placeholder="Title">
+                                    <div class="flex gap-2 bg-white/80 rounded px-1 shrink-0 ml-auto">
+                                        <button class="link-btn text-slate-400 hover:text-blue-500 text-xs font-bold cursor-pointer transition-colors" title="Connect">🔗</button>
+                                        <button class="stamp-btn text-slate-400 hover:text-green-500 text-xs font-bold cursor-pointer transition-colors" title="Add Stamp">⨁</button>
+                                        <button class="delete-btn text-red-400 hover:text-red-600 text-xs font-bold cursor-pointer transition-colors">✕</button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Stamp Chooser State (Hidden by default) -->
+                                <div class="header-stamp-chooser flex justify-evenly items-center w-full bg-yellow-100 rounded hidden absolute top-0 left-0 right-0">
+                                    ${stampButtonsHTML}
+                                    <button class="cancel-stamp-btn text-slate-400 hover:text-slate-600 text-xs font-bold ml-1 cursor-pointer">✕</button>
                                 </div>
                             </div>
                             <textarea class="card-content text-xs cursor-text" placeholder="Write here..."></textarea>
@@ -344,27 +390,66 @@ async def serve_ui():
                             <div class="stamps-container absolute inset-0 pointer-events-none z-20 overflow-hidden rounded"></div>
                         `;
 
-                        // Add Stamp Event Listener
+                        // Stamp UI Toggle Logic
+                        const normalHeader = cardEl.querySelector('.header-normal');
+                        const stampChooser = cardEl.querySelector('.header-stamp-chooser');
+                        
                         const stampBtn = cardEl.querySelector('.stamp-btn');
                         stampBtn.addEventListener('mousedown', (e) => {
-                            e.stopPropagation(); // Prevent drag logic
-                            
-                            // Pick a random stamp type for demonstration
-                            const stampKeys = Object.keys(STAMP_LIBRARY);
-                            const randomType = stampKeys[Math.floor(Math.random() * stampKeys.length)];
-                            
-                            queueAction({
-                                action: "add_stamp",
-                                card_id: card.id,
-                                stamp_type: randomType,
-                                // Drop the stamp at a random spot inside the card boundaries [cite: 22]
-                                rel_x: Math.floor(Math.random() * 120),
-                                rel_y: Math.floor(Math.random() * 120) + 20 
+                            e.stopPropagation(); 
+                            normalHeader.classList.add('hidden');
+                            stampChooser.classList.remove('hidden');
+                        });
+                        
+                        const cancelStampBtn = cardEl.querySelector('.cancel-stamp-btn');
+                        cancelStampBtn.addEventListener('mousedown', (e) => {
+                            e.stopPropagation();
+                            stampChooser.classList.add('hidden');
+                            normalHeader.classList.remove('hidden');
+                        });
+                        
+                        cardEl.querySelectorAll('.choose-stamp-btn').forEach(btn => {
+                            btn.addEventListener('mousedown', (e) => {
+                                e.stopPropagation();
+                                const selectedType = btn.getAttribute('data-type');
+                                queueAction({
+                                    action: "add_stamp",
+                                    card_id: card.id,
+                                    stamp_type: selectedType,
+                                    rel_x: Math.floor(Math.random() * 120),
+                                    rel_y: Math.floor(Math.random() * 120) + 20 
+                                });
                             });
                         });
-
-                        // [Keep your existing deleteBtn event listener here]
                         
+                        // Connection / Linking Logic
+                        const linkBtn = cardEl.querySelector('.link-btn');
+                        linkBtn.addEventListener('mousedown', (e) => {
+                            e.stopPropagation(); // Prevent drag logic
+                            if (linkingFromId === null) {
+                                // Click 1: Activate Targeting Mode
+                                linkingFromId = card.id;
+                                document.body.style.cursor = 'crosshair';
+                                renderBoard();
+                            } else if (linkingFromId !== card.id) {
+                                // Click 2: Complete the link
+                                queueAction({ 
+                                    action: "add_connection", 
+                                    conn_id: 'conn_' + Math.random().toString(36).substr(2, 9),
+                                    from_card_id: linkingFromId, 
+                                    to_card_id: card.id 
+                                });
+                                linkingFromId = null;
+                                document.body.style.cursor = 'default';
+                                renderBoard();
+                            } else {
+                                // Clicked same card twice: Cancel
+                                linkingFromId = null;
+                                document.body.style.cursor = 'default';
+                                renderBoard();
+                            }
+                        });
+
                         // Attach the Deletion Event Listener
                         const deleteBtn = cardEl.querySelector('.delete-btn');
                         deleteBtn.addEventListener('mousedown', (e) => {
@@ -381,7 +466,7 @@ async def serve_ui():
                         
                         // Dragging Logic
                         cardEl.addEventListener('mousedown', (e) => {
-                            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.closest('.link-btn')) return;
                             if (activeLocks[card.id] && activeLocks[card.id].user !== currentUser) return; // Locked
                             
                             isDragging = true;
@@ -440,6 +525,14 @@ async def serve_ui():
                         contentInput.addEventListener('blur', handleBlur);
                     }
 
+                    // Style active link button
+                    const activeLinkBtn = cardEl.querySelector('.link-btn');
+                    if (linkingFromId === card.id) {
+                        activeLinkBtn.classList.add('text-blue-600', 'scale-125');
+                    } else {
+                        activeLinkBtn.classList.remove('text-blue-600', 'scale-125');
+                    }
+
                     // Update UI if we are NOT the ones currently locking/editing it
                     if (localLockId !== card.id) {
                         cardEl.style.left = card.x + 'px';
@@ -490,6 +583,9 @@ async def serve_ui():
                         const x2 = parseInt(toCard.style.left) + 80;
                         const y2 = parseInt(toCard.style.top) + 80;
 
+                        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
+                        // The visible connection line
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('x1', x1);
                         line.setAttribute('y1', y1);
@@ -498,8 +594,42 @@ async def serve_ui():
                         line.setAttribute('stroke', conn.color || 'red');
                         line.setAttribute('stroke-width', '4');
                         line.setAttribute('stroke-dasharray', '8,4');
-                        
-                        svgLayer.appendChild(line);
+                        line.style.transition = 'stroke 0.2s';
+
+                        // The thick, invisible hitbox line
+                        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        hitbox.setAttribute('x1', x1);
+                        hitbox.setAttribute('y1', y1);
+                        hitbox.setAttribute('x2', x2);
+                        hitbox.setAttribute('y2', y2);
+                        hitbox.setAttribute('stroke', 'transparent');
+                        hitbox.setAttribute('stroke-width', '15');
+                        hitbox.style.cursor = 'pointer';
+
+                        // UI Feedback: Highlight the string when hovering the hitbox
+                        hitbox.addEventListener('mouseenter', () => {
+                            line.setAttribute('stroke', '#f87171');
+                            line.setAttribute('stroke-width', '6');
+                        });
+                        hitbox.addEventListener('mouseleave', () => {
+                            line.setAttribute('stroke', conn.color || 'red');
+                            line.setAttribute('stroke-width', '4');
+                        });
+
+                        // Snip action
+                        hitbox.addEventListener('mousedown', (e) => {
+                            e.stopPropagation();
+                            if (confirm("Snip this connection?")) {
+                                queueAction({
+                                    action: "delete_connection",
+                                    conn_id: conn.id
+                                });
+                            }
+                        });
+
+                        group.appendChild(line);
+                        group.appendChild(hitbox);
+                        svgLayer.appendChild(group);
                     }
                 });
             }
@@ -515,6 +645,18 @@ async def serve_ui():
                     y: Math.floor(Math.random() * 300) + 50
                 });
             }
+
+            // Global Cancel for Linking Mode
+            document.getElementById('board-bg').addEventListener('mousedown', (e) => {
+                // Ignore if clicking on a card or modal 
+                if (e.target.closest('.card') || e.target.closest('#auth-modal')) return;
+                
+                if (linkingFromId !== null) {
+                    linkingFromId = null;
+                    document.body.style.cursor = 'default';
+                    renderBoard(); 
+                }
+            });
 
             // Sync Polling
             setInterval(async () => {
